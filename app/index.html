@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Coast — Poster Cover Maker</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<main class="app">
+  <section class="controls">
+    <h1>Neon Coast</h1>
+    <p class="tagline">Your photos, turned into a sunset poster cover — offline, in your browser.</p>
+
+    <div class="row" aria-label="History">
+      <button id="undo" type="button" disabled>↩ Undo</button>
+      <button id="redo" type="button" disabled>Redo ↪</button>
+      <span class="hint">Ctrl+Z / Ctrl+Shift+Z</span>
+    </div>
+
+    <fieldset>
+      <legend>Photos</legend>
+      <label>Load photos <input id="photo" type="file" accept="image/*" multiple></label>
+      <div class="row">
+        <button type="button" data-sample="pier">Sample: Pier</button>
+        <button type="button" data-sample="boulevard">Sample: Boulevard</button>
+      </div>
+      <label>Replace selected panel <input id="replace" type="file" accept="image/*"></label>
+      <p class="hint">Click a panel to select it, then drag it to pan and scroll to zoom.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Layout</legend>
+      <div class="row" id="layout-buttons">
+        <button type="button" data-value="hero">Hero + three</button>
+        <button type="button" data-value="grid">Four-panel grid</button>
+        <button type="button" data-value="single">Full bleed</button>
+        <button type="button" data-value="nine">Nine-panel grid</button>
+        <button type="button" data-value="snaps">Snapshots</button>
+        <button type="button" data-value="strips">Vertical strips</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Grade</legend>
+      <div class="row" id="grade-buttons">
+        <button type="button" data-value="vice">Vice Sunset</button>
+        <button type="button" data-value="neon">Neon Nights</button>
+        <button type="button" data-value="gold">Golden Hour</button>
+        <button type="button" data-value="duotone">Sunset Duotone</button>
+        <button type="button" data-value="midnight">Midnight Neon</button>
+      </div>
+      <label>Grade strength <span id="grade-strength-value">80%</span>
+        <input id="grade-strength" type="range" min="0" max="100" step="5" value="80">
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Words</legend>
+      <label>Caption <input id="caption" type="text" maxlength="40" value="Sunset Heist"></label>
+      <label>Subtitle <input id="subtitle" type="text" maxlength="48" value="Neon Coast nights"></label>
+      <div class="row" id="titlepos-buttons">
+        <button type="button" data-value="bottom">Title at bottom</button>
+        <button type="button" data-value="top">Title at top</button>
+      </div>
+      <label>Letter spacing <span id="letter-spacing-value">0px</span>
+        <input id="letter-spacing" type="range" min="0" max="12" step="1" value="0">
+      </label>
+      <label>Subtitle glow <span id="glow-value">1.0×</span>
+        <input id="glow" type="range" min="0" max="2" step="0.1" value="1">
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Effects</legend>
+      <label class="check"><input id="grain" type="checkbox"> Film grain</label>
+      <label class="check"><input id="halftone" type="checkbox"> Halftone dots</label>
+      <label>Vignette <span id="vignette-value">30%</span>
+        <input id="vignette" type="range" min="0" max="100" step="5" value="30">
+      </label>
+      <button id="compare" type="button">Hold: original</button>
+      <label class="check"><input id="badge" type="checkbox"> Corner badge</label>
+      <label>Badge text <input id="badge-text" type="text" maxlength="20" value="EST. 2026"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Selected panel</legend>
+      <label>Zoom <span id="zoom-value">100%</span>
+        <input id="zoom" type="range" min="1" max="3" step="0.05" value="1">
+      </label>
+      <button id="fit" type="button">Reset crop</button>
+      <button id="shuffle" type="button">Shuffle crops</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Export PNG</legend>
+      <div class="row" id="size-buttons">
+        <button type="button" data-value="square">Square</button>
+        <button type="button" data-value="portrait">Portrait</button>
+        <button type="button" data-value="wide">Wide</button>
+        <button type="button" data-value="story">Story</button>
+      </div>
+      <div class="row">
+        <button type="button" data-export="square">PNG 1080 × 1080</button>
+        <button type="button" data-export="portrait">PNG 1080 × 1350</button>
+        <button type="button" data-export="wide">PNG 1920 × 1080</button>
+        <button type="button" data-export="story">PNG 1080 × 1920</button>
+      </div>
+      <p id="status" role="status"></p>
+    </fieldset>
+  </section>
+
+  <section class="stage">
+    <canvas id="cover" width="1080" height="1080" aria-label="The cover"></canvas>
+  </section>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
