@@ -39,18 +39,25 @@ const MIME: Record<string, string> = {
 };
 
 createServer((request, response) => {
+  const method = request.method ?? 'GET';
+  if (method !== 'GET' && method !== 'HEAD') {
+    response.writeHead(405, { allow: 'GET, HEAD' }).end('method not allowed');
+    return;
+  }
+  // HEAD asks for the headers only: every response below ends with no body.
+  const body = (text: string) => (method === 'HEAD' ? '' : text);
   const url = new URL(request.url ?? '/', 'http://localhost');
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);
   } catch {
-    response.writeHead(400).end('bad request');
+    response.writeHead(400).end(body('bad request'));
     return;
   }
   if (pathname.endsWith('/')) pathname += 'index.html';
   const file = resolve(join(root, normalize(pathname)));
   if (file !== root && !file.startsWith(root + sep)) {
-    response.writeHead(403).end('forbidden');
+    response.writeHead(403).end(body('forbidden'));
     return;
   }
   let size: number;
@@ -59,7 +66,7 @@ createServer((request, response) => {
     if (!stats.isFile()) throw new Error('not a file');
     size = stats.size;
   } catch {
-    response.writeHead(404).end('not found');
+    response.writeHead(404).end(body('not found'));
     return;
   }
   response.writeHead(200, {
@@ -67,6 +74,10 @@ createServer((request, response) => {
     'content-length': size,
     'cache-control': 'no-store',
   });
+  if (method === 'HEAD') {
+    response.end();
+    return;
+  }
   createReadStream(file).pipe(response);
 }).listen(port, '127.0.0.1', () => {
   console.log(`app/ is on http://localhost:${port}`);

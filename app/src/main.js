@@ -131,6 +131,10 @@ undoButton.addEventListener('click', doUndo);
 redoButton.addEventListener('click', doRedo);
 document.addEventListener('keydown', (e) => {
   if (!(e.ctrlKey || e.metaKey)) return;
+  // A text field keeps the browser's own undo: app-undo must not steal
+  // Ctrl+Z / Ctrl+Y while the user is typing a caption, subtitle or badge.
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
   const key = e.key.toLowerCase();
   if (key === 'z' && !e.shiftKey) {
     e.preventDefault();
@@ -160,9 +164,24 @@ function armSliderCommit(el) {
   el.addEventListener('change', disarm);
 }
 
-/** Push one history entry when the user starts editing a text field. */
+/**
+ * Push one history entry for a text edit: on the first input after focus,
+ * not on focus itself — focusing (and blurring) without typing must not
+ * fill the undo stack with identical snapshots. The snapshot is taken
+ * before the edit lands: this listener is registered before the input
+ * handler that writes the new value into state, so it still sees the
+ * pre-edit state.
+ */
 function armTextCommit(el) {
-  el.addEventListener('focus', () => pushHistory());
+  el.addEventListener('focus', () => { el._armed = true; });
+  el.addEventListener('input', () => {
+    if (!el._armed) return;
+    pushHistory();
+    el._armed = false;
+  });
+  const disarm = () => { el._armed = false; };
+  el.addEventListener('blur', disarm);
+  el.addEventListener('change', disarm);
 }
 
 // --- Control sync -----------------------------------------------------------
@@ -195,8 +214,28 @@ function syncAllControls() {
   syncZoomControl();
 }
 
+/**
+ * Blob URLs of uploaded photos, one per panel slot. Sample photos are plain
+ * paths (./samples/…), never blobs, so they are never tracked or revoked.
+ * (Kept beside state, not in it: undo snapshots copy the photo by reference,
+ * and a revoked blob URL stays drawable once its image has loaded.)
+ */
+const panelBlobUrls = Array.from({ length: 9 }, () => null);
+
+/** Remember that panel `i`'s photo came from blob URL `url`. */
+function trackBlobUrl(i, url) {
+  panelBlobUrls[i] = url;
+}
+
 /** Put `photo` into panel `i` with a distinct framing (never a copy of another panel). */
 function setPanelPhoto(i, photo, framing = FRAMINGS[i % FRAMINGS.length]) {
+  // Replacing a panel drops its old uploaded photo: revoke its blob URL so
+  // long sessions do not accumulate one URL per upload.
+  const oldUrl = panelBlobUrls[i];
+  if (oldUrl) {
+    URL.revokeObjectURL(oldUrl);
+    panelBlobUrls[i] = null;
+  }
   state.panels[i] = { photo, zoom: framing.zoom, dx: framing.dx, dy: framing.dy };
 }
 
@@ -335,6 +374,11 @@ subtitleInput.addEventListener('input', () => {
 
 document.getElementById('photo').addEventListener('change', async (e) => {
   const files = [...e.target.files];
+  // A cover scene has no selection: there is no panel to fill into.
+  if (selected < 0) {
+    e.target.value = '';
+    return;
+  }
   // Fill empty panels first, then cycle from the selected panel.
   const order = [];
   for (let i = 0; i < state.panels.length; i += 1) {
@@ -347,11 +391,14 @@ document.getElementById('photo').addEventListener('change', async (e) => {
   pushHistory();
   for (const file of files) {
     const slot = order.length ? order.shift() : selected;
+    const url = URL.createObjectURL(file);
     try {
-      const photo = await loadImage(URL.createObjectURL(file));
+      const photo = await loadImage(url);
       setPanelPhoto(slot, photo);
+      trackBlobUrl(slot, url);
       selected = slot;
     } catch (err) {
+      URL.revokeObjectURL(url);
       statusEl.textContent = `Could not read ${file.name}.`;
     }
   }
@@ -363,10 +410,18 @@ document.getElementById('photo').addEventListener('change', async (e) => {
 document.getElementById('replace').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  // A cover scene has no selection: there is no panel to replace.
+  if (selected < 0) {
+    e.target.value = '';
+    return;
+  }
   pushHistory();
+  const url = URL.createObjectURL(file);
   try {
-    setPanelPhoto(selected, await loadImage(URL.createObjectURL(file)), { zoom: 1, dx: 0, dy: 0 });
+    setPanelPhoto(selected, await loadImage(url), { zoom: 1, dx: 0, dy: 0 });
+    trackBlobUrl(selected, url);
   } catch (err) {
+    URL.revokeObjectURL(url);
     statusEl.textContent = `Could not read ${file.name}.`;
   }
   redraw();
@@ -375,6 +430,7 @@ document.getElementById('replace').addEventListener('change', async (e) => {
 
 document.querySelectorAll('[data-sample]').forEach((button) => {
   button.addEventListener('click', async () => {
+    if (selected < 0) return;
     pushHistory();
     try {
       setPanelPhoto(selected, await loadImage(`./samples/${button.dataset.sample}.jpg`));
@@ -400,12 +456,14 @@ function syncZoomControl() {
 
 armSliderCommit(zoomSlider);
 zoomSlider.addEventListener('input', () => {
+  if (selected < 0) return;
   state.panels[selected].zoom = Number(zoomSlider.value);
   zoomValue.textContent = `${Math.round(state.panels[selected].zoom * 100)}%`;
   redraw();
 });
 
 document.getElementById('fit').addEventListener('click', () => {
+  if (selected < 0) return;
   pushHistory();
   state.panels[selected] = { photo: state.panels[selected].photo, zoom: 1, dx: 0, dy: 0 };
   syncZoomControl();
@@ -483,8 +541,8 @@ canvas.addEventListener('wheel', (e) => {
 
 // --- Export ------------------------------------------------------------------
 
-async function exportCover(sizeKey) {
-  const size = SIZES[sizeKey];
+/** Load the vendored display fonts; the canvas falls back to its system-font stack on failure. */
+async function ensureFonts() {
   try {
     await Promise.all([
       document.fonts.load('100px Anton'),
@@ -493,6 +551,11 @@ async function exportCover(sizeKey) {
   } catch (err) {
     // Fall back to the system-font stack if the vendored fonts fail to load.
   }
+}
+
+async function exportCover(sizeKey) {
+  const size = SIZES[sizeKey];
+  await ensureFonts();
   const out = document.createElement('canvas');
   drawCover(out, { ...state, size }, { highlight: -1 });
   out.toBlob((blob) => {
@@ -516,14 +579,7 @@ document.querySelectorAll('[data-export]').forEach((button) => {
 // --- Start -------------------------------------------------------------------
 
 async function start() {
-  try {
-    await Promise.all([
-      document.fonts.load('100px Anton'),
-      document.fonts.load('60px Pacifico'),
-    ]);
-  } catch (err) {
-    // The canvas falls back to its system-font stack; the cover still draws.
-  }
+  await ensureFonts();
   const params = new URLSearchParams(location.search);
   const shot = params.get('shot');
   const layoutParam = params.get('layout');
@@ -538,7 +594,10 @@ async function start() {
   if (params.get('halftone') === '1') state.halftone = true;
   const vigParam = params.get('vignette');
   if (vigParam !== null) {
-    state.vignette = Math.max(0, Math.min(1, Number(vigParam) / 100));
+    // Math.min/max let NaN through, so an unparseable value needs its own
+    // check — otherwise the label, slider and render disagree (NaN% / 50 / no vignette).
+    const vig = Number(vigParam) / 100;
+    state.vignette = Number.isFinite(vig) ? Math.max(0, Math.min(1, vig)) : 0.3;
   }
   if (params.get('badge') === '1') {
     state.badgeOn = true;
@@ -546,22 +605,28 @@ async function start() {
     if (badgeText) state.badgeText = badgeText;
   }
   syncAllControls();
-  if (shot) {
-    await runShot(shot, params, async (sample, text) => {
-      state.caption = text;
-      captionInput.value = text;
-      const main = await loadImage(sample);
-      // Fill every slot: alternate the main photo with the other sample,
-      // each with its own framing — no two panels ever match.
-      const other = sample.includes('pier') ? 'boulevard' : 'pier';
-      const extra = await loadImage(`./samples/${other}.jpg`);
-      fillAllPanels([main, extra]);
-      // A cover scene is a clean export view: no editor selection outline.
-      if (shot === 'cover') selected = -1;
-      redraw();
-    });
-  } else {
-    await loadSamples();
+  try {
+    if (shot) {
+      await runShot(shot, params, async (sample, text) => {
+        state.caption = text;
+        captionInput.value = text;
+        const main = await loadImage(sample);
+        // Fill every slot: alternate the main photo with the other sample,
+        // each with its own framing — no two panels ever match.
+        const other = sample.includes('pier') ? 'boulevard' : 'pier';
+        const extra = await loadImage(`./samples/${other}.jpg`);
+        fillAllPanels([main, extra]);
+        // A cover scene is a clean export view: no editor selection outline.
+        if (shot === 'cover') selected = -1;
+        redraw();
+      });
+    } else {
+      await loadSamples();
+    }
+  } catch (err) {
+    // A scene whose photo cannot load must still report ready, or a capture
+    // harness waiting on __shotReady times out on a blank page.
+    statusEl.textContent = 'Could not load the photo for this scene.';
   }
   syncZoomControl();
   redraw();

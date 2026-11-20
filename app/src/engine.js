@@ -219,13 +219,23 @@ export function panelAt(state, x, y) {
   return -1;
 }
 
-/** Keep a panel's pan offsets inside the photo so no empty edge shows. */
-function clampPan(panel, rect, photo) {
+/**
+ * Cover-fit geometry for a photo in a rect at a given zoom: the scale that
+ * covers the rect, the drawn size, and the pan limits as shares of the rect.
+ * Single source for clampPan, shuffleCrops and drawPanelPhoto.
+ */
+export function coverFit(rect, photo, zoom) {
   const cover = Math.max(rect.w / photo.naturalWidth, rect.h / photo.naturalHeight);
-  const dw = photo.naturalWidth * cover * panel.zoom;
-  const dh = photo.naturalHeight * cover * panel.zoom;
+  const dw = photo.naturalWidth * cover * zoom;
+  const dh = photo.naturalHeight * cover * zoom;
   const maxDx = dw > rect.w ? (dw - rect.w) / 2 / rect.w : 0;
   const maxDy = dh > rect.h ? (dh - rect.h) / 2 / rect.h : 0;
+  return { cover, dw, dh, maxDx, maxDy };
+}
+
+/** Keep a panel's pan offsets inside the photo so no empty edge shows. */
+function clampPan(panel, rect, photo) {
+  const { maxDx, maxDy } = coverFit(rect, photo, panel.zoom);
   panel.dx = Math.max(-maxDx, Math.min(maxDx, panel.dx));
   panel.dy = Math.max(-maxDy, Math.min(maxDy, panel.dy));
 }
@@ -239,12 +249,9 @@ export function shuffleCrops(state) {
     if (!panel.photo) continue;
     const rect = rects[i];
     panel.zoom = 1 + Math.random() * 1.5;
-    clampPan(panel, rect, panel.photo);
-    const cover = Math.max(rect.w / panel.photo.naturalWidth, rect.h / panel.photo.naturalHeight);
-    const dw = panel.photo.naturalWidth * cover * panel.zoom;
-    const dh = panel.photo.naturalHeight * cover * panel.zoom;
-    const maxDx = dw > rect.w ? (dw - rect.w) / 2 / rect.w : 0;
-    const maxDy = dh > rect.h ? (dh - rect.h) / 2 / rect.h : 0;
+    // The random offsets are already inside the range by construction, so
+    // there is nothing to clamp after picking them.
+    const { maxDx, maxDy } = coverFit(rect, panel.photo, panel.zoom);
     panel.dx = (Math.random() * 2 - 1) * maxDx;
     panel.dy = (Math.random() * 2 - 1) * maxDy;
   }
@@ -384,9 +391,7 @@ function drawPanelPhoto(ctx, rect, panel, grade, strength, halftone, rotation = 
     return;
   }
   clampPan(panel, drawRect, photo);
-  const cover = Math.max(drawRect.w / photo.naturalWidth, drawRect.h / photo.naturalHeight);
-  const dw = photo.naturalWidth * cover * panel.zoom;
-  const dh = photo.naturalHeight * cover * panel.zoom;
+  const { dw, dh } = coverFit(drawRect, photo, panel.zoom);
   const dx = drawRect.x + (drawRect.w - dw) / 2 + panel.dx * drawRect.w;
   const dy = drawRect.y + (drawRect.h - dh) / 2 + panel.dy * drawRect.h;
   ctx.beginPath();
@@ -416,7 +421,7 @@ function drawPanelPhoto(ctx, rect, panel, grade, strength, halftone, rotation = 
 function drawTitleBlock(ctx, w, h, state) {
   const bandH = titleBandHeight(h);
   const y0 = state.titlePos === 'top' ? 0 : h - bandH;
-  // Band: deep plum, with a neon accent stripe along its outer edge.
+  // Band: deep plum, with a neon accent stripe along its inner edge, facing the photo.
   const band = ctx.createLinearGradient(0, y0, 0, y0 + bandH);
   band.addColorStop(0, '#241040');
   band.addColorStop(1, '#0d0518');
@@ -526,8 +531,9 @@ export function drawCover(canvas, state, options = {}) {
       ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
     }
   }
-  drawTitleBlock(ctx, w, h, state);
   // Vignette over the photo area, strength from the slider (0 = off).
+  // Drawn BEFORE the title band, so the caption and subtitle stay clean —
+  // the band paints over the vignette where they overlap.
   const vigStrength = state.vignette ?? 0.3;
   if (vigStrength > 0) {
     const vig = ctx.createRadialGradient(
@@ -539,6 +545,7 @@ export function drawCover(canvas, state, options = {}) {
     ctx.fillStyle = vig;
     ctx.fillRect(0, 0, w, h);
   }
+  drawTitleBlock(ctx, w, h, state);
   // Film grain over the whole cover (seeded tile, so every render matches).
   if (state.grain) {
     ctx.save();
@@ -549,14 +556,25 @@ export function drawCover(canvas, state, options = {}) {
     ctx.restore();
   }
   drawBadge(ctx, w, h, state);
-  // Editor selection outline, never on an export.
+  // Editor selection outline, never on an export. It follows the panel's
+  // own rotation, so it stays square on the tilted snapshots panels.
   const highlight = options.highlight ?? -1;
   if (highlight >= 0 && highlight < count) {
     const r = rects[highlight];
+    const rotation = layoutRotation(state.layout, highlight);
+    ctx.save();
+    if (rotation) {
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(rotation);
+      ctx.translate(-cx, -cy);
+    }
     ctx.strokeStyle = '#00e5d4';
     ctx.lineWidth = Math.max(3, Math.round(w * 0.005));
     ctx.setLineDash([Math.round(w * 0.02), Math.round(w * 0.012)]);
     ctx.strokeRect(r.x + 2, r.y + 2, r.w - 4, r.h - 4);
     ctx.setLineDash([]);
+    ctx.restore();
   }
 }
